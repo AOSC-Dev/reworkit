@@ -1,6 +1,6 @@
 mod db;
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
@@ -38,6 +38,7 @@ where
 struct AppState {
     secret: String,
     db: Mutex<Db>,
+    log_dir: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -80,13 +81,19 @@ async fn main() -> Result<()> {
     let url = std::env::var("REWORKIT_URL").context("REWORKIT_URL is not set.")?;
     let secret = std::env::var("REWORKIT_SECRET").context("REWORKIT_SECRET is not set.")?;
     let redis = std::env::var("REWORKIT_REDIS_URL").context("REWORKIT_REDIS_URL is not set.")?;
+    let log_dir =
+        PathBuf::from(std::env::var("REWORKIT_LOG_DIR").context("REWORKIT_LOG_DIR is not set.")?);
 
     let db = Mutex::new(Db::new(&redis).await?);
 
     let router = Router::new()
         .route("/push_log", post(push_log))
         .route("/get", get(get_package_result))
-        .with_state(Arc::new(AppState { secret, db }));
+        .with_state(Arc::new(AppState {
+            secret,
+            db,
+            log_dir,
+        }));
     let listener = tokio::net::TcpListener::bind(&url).await?;
     axum::serve(listener, router).await?;
 
@@ -108,6 +115,8 @@ async fn push_log(
     header: HeaderMap,
     mut form: Multipart,
 ) -> Result<(), AnyhowError> {
+    let log_dir = state.log_dir.clone();
+
     if header
         .get("SECRET")
         .and_then(|x| x.to_str().ok())
@@ -155,7 +164,7 @@ async fn push_log(
     let fc = filename.clone();
 
     tokio::spawn(async move {
-        if let Err(e) = fs::write(&*fc, log_content).await {
+        if let Err(e) = fs::write(log_dir.join(&*fc), log_content).await {
             error!("Unale to write build log {fc}: {e}");
         }
     });

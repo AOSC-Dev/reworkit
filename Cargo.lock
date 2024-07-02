@@ -1888,6 +1888,8 @@ dependencies = [
  "dotenvy",
  "reqwest",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "walkdir",
 ]
 

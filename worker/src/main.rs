@@ -1,12 +1,17 @@
 use anyhow::{ensure, Result};
 use async_compression::tokio::write::GzipEncoder;
 use clap::Parser;
-use reqwest::{multipart::{self, Part}, Client};
+use reqwest::{
+    multipart::{self, Part},
+    Client,
+};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::{io::AsyncWriteExt, process::Command, task::spawn_blocking};
+use tracing::{info, level_filters::LevelFilter};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -32,6 +37,34 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
+
+    let env_log = EnvFilter::try_from_default_env();
+
+    if let Ok(filter) = env_log {
+        tracing_subscriber::registry()
+            .with(
+                fmt::layer()
+                    .event_format(
+                        tracing_subscriber::fmt::format()
+                            .with_file(true)
+                            .with_line_number(true),
+                    )
+                    .with_filter(filter),
+            )
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(
+                fmt::layer()
+                    .event_format(
+                        tracing_subscriber::fmt::format()
+                            .with_file(true)
+                            .with_line_number(true),
+                    )
+                    .with_filter(LevelFilter::INFO),
+            )
+            .init();
+    }
 
     let Args {
         workspace,
@@ -60,6 +93,7 @@ async fn work(
     url: &str,
     arch: &str,
 ) -> Result<()> {
+    info!("Running git pull");
     let git_pull = Command::new("git")
         .arg("pull")
         .current_dir(&*tree_dir)
@@ -68,13 +102,15 @@ async fn work(
 
     ensure!(git_pull.status.success(), "Failed to run git pull");
 
+    info!("Getting packages");
     let pkgs = spawn_blocking(move || list_packages(&tree_dir)).await?;
 
+    info!("Running ciel update-os");
     let ciel_update = Command::new("ciel").arg("update-os").output().await?;
     ensure!(ciel_update.status.success(), "Failed to run ciel update-os");
 
     for pkg in pkgs {
-        println!("Building {pkg}");
+        info!("Building {pkg}");
         let ciel_build = Command::new("ciel")
             .arg("build")
             .arg("-i")
@@ -86,6 +122,8 @@ async fn work(
         let stdout = ciel_build.stdout;
         let stderr = ciel_build.stderr;
         let success = ciel_build.status.success();
+
+        info!("is success: {}", success);
 
         let mut log = vec![];
         log.extend("STDOUT:\n".as_bytes());
