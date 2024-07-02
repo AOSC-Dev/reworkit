@@ -3,6 +3,7 @@ mod db;
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
+use async_compression::tokio::bufread::GzipDecoder;
 use axum::{
     extract::{Multipart, Query, State},
     http::{HeaderMap, StatusCode},
@@ -12,7 +13,7 @@ use axum::{
 };
 use db::{Db, Package};
 use serde::Deserialize;
-use tokio::{fs, sync::Mutex};
+use tokio::{fs, io, sync::Mutex};
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
@@ -164,8 +165,8 @@ async fn push_log(
     let fc = filename.clone();
 
     tokio::spawn(async move {
-        if let Err(e) = fs::write(log_dir.join(&*fc), log_content).await {
-            error!("Unale to write build log {fc}: {e}");
+        if let Err(e) = write_log(log_content, log_dir, fc).await {
+            error!("Error writing log: {}", e);
         }
     });
 
@@ -174,11 +175,19 @@ async fn push_log(
     let package = db.get(&pkgname).await;
 
     if let Ok(mut package) = package {
-        package.results.push(db::BuildResult {
-            arch,
-            success,
-            log: filename.to_string(),
-        });
+        if let Some(v) = package.results.iter_mut().find(|x| x.arch == arch) {
+            *v = db::BuildResult {
+                arch,
+                success,
+                log: filename.to_string(),
+            }
+        } else {
+            package.results.push(db::BuildResult {
+                arch,
+                success,
+                log: filename.to_string(),
+            });
+        }
         db.set(&pkgname, &package).await?;
     } else {
         let package = Package {
@@ -191,6 +200,15 @@ async fn push_log(
         };
         db.set(&pkgname, &package).await?;
     }
+
+    Ok(())
+}
+
+async fn write_log(log_content: Vec<u8>, log_dir: PathBuf, fc: Arc<String>) -> Result<()> {
+    fs::create_dir_all(&log_dir).await?;
+    let mut reader = GzipDecoder::new(&*log_content);
+    let mut f = fs::File::create(log_dir.join(&*fc)).await?;
+    io::copy(&mut reader, &mut f).await?;
 
     Ok(())
 }

@@ -139,7 +139,10 @@ async fn work(
             .text("package", pkg.to_string())
             .text("arch", arch.to_string())
             .text("success", success.to_string())
-            .part("log", Part::bytes(log).file_name(format!("{pkg}.log")));
+            .part(
+                "log",
+                Part::bytes(compress_log).file_name(format!("{pkg}.log")),
+            );
 
         client
             .post(format!("{url}/push_log"))
