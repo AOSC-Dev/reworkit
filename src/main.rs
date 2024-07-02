@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::{
-    extract::Multipart,
-    http::StatusCode,
+    extract::{Multipart, State},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Router,
@@ -30,18 +30,38 @@ where
     }
 }
 
+struct AppState {
+    secret: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let url = std::env::var("REWORKIT_URL").context("REWORKIT_URL is not set.")?;
+    let secret = std::env::var("REWORKIT_SECRET").context("REWORKIT_SECTRET is not set.")?;
 
-    let router = Router::new().route("/push_log", post(push_log));
+    let router = Router::new()
+        .route("/push_log", post(push_log))
+        .with_state(Arc::new(AppState { secret }));
     let listener = tokio::net::TcpListener::bind(&url).await?;
     axum::serve(listener, router).await?;
 
     Ok(())
 }
 
-async fn push_log(mut form: Multipart) -> Result<(), AnyhowError> {
+async fn push_log(
+    State(state): State<Arc<AppState>>,
+    header: HeaderMap,
+    mut form: Multipart,
+) -> Result<(), AnyhowError> {
+    if header
+        .get("SECRET")
+        .and_then(|x| x.to_str().ok())
+        .map(|x| x != state.secret)
+        .unwrap_or(true)
+    {
+        return Err(anyhow!("Invalid secret token").into());
+    }
+
     let mut pkgname = None;
     let mut arch = None;
     let mut log_content = Vec::new();
