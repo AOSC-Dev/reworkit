@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
-    extract::{Multipart, State},
+    extract::{Multipart, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
-    Router,
+    routing::{get, post},
+    Json, Router,
 };
-use db::Db;
+use db::{Db, Package};
+use serde::Deserialize;
 use tokio::{fs, sync::Mutex};
 use tracing::{error, info};
 
@@ -38,6 +39,11 @@ struct AppState {
     db: Mutex<Db>,
 }
 
+#[derive(Deserialize)]
+struct GetPackageResultQuery {
+    name: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -49,11 +55,22 @@ async fn main() -> Result<()> {
 
     let router = Router::new()
         .route("/push_log", post(push_log))
+        .route("/get", get(get_package_result))
         .with_state(Arc::new(AppState { secret, db }));
     let listener = tokio::net::TcpListener::bind(&url).await?;
     axum::serve(listener, router).await?;
 
     Ok(())
+}
+
+async fn get_package_result(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<GetPackageResultQuery>,
+) -> Result<Json<Package>, AnyhowError> {
+    let mut db = state.db.lock().await;
+    let package = db.get(&query.name).await?;
+
+    Ok(Json(package))
 }
 
 async fn push_log(
