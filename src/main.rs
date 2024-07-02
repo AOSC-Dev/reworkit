@@ -1,14 +1,17 @@
+mod db;
+
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::{Multipart, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Router,
 };
-use tokio::fs;
+use db::Db;
+use tokio::{fs, sync::Mutex};
 use tracing::{error, info};
 
 // learned from https://github.com/tokio-rs/axum/blob/main/examples/anyhow-error-response/src/main.rs
@@ -32,16 +35,21 @@ where
 
 struct AppState {
     secret: String,
+    db: Mutex<Db>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
     let url = std::env::var("REWORKIT_URL").context("REWORKIT_URL is not set.")?;
     let secret = std::env::var("REWORKIT_SECRET").context("REWORKIT_SECTRET is not set.")?;
+    let redis = std::env::var("REWORKIT_REDIS_URL").context("REWORKIT_REDIS_URL is not set.")?;
+
+    let db = Mutex::new(Db::new(&redis).await?);
 
     let router = Router::new()
         .route("/push_log", post(push_log))
-        .with_state(Arc::new(AppState { secret }));
+        .with_state(Arc::new(AppState { secret, db }));
     let listener = tokio::net::TcpListener::bind(&url).await?;
     axum::serve(listener, router).await?;
 
@@ -66,6 +74,7 @@ async fn push_log(
     let mut arch = None;
     let mut log_content = Vec::new();
     let mut success = None;
+
     while let Some(field) = form.next_field().await? {
         match field.name() {
             Some("package") => {
@@ -75,12 +84,10 @@ async fn push_log(
             }
             Some("arch") => {
                 let arch_field = field.text().await?;
-                info!("Received arch: {}", arch_field);
                 arch = Some(arch_field);
             }
             Some("success") => {
                 let success_field = field.text().await?;
-                info!("Received success: {}", success_field);
                 success = Some(success_field);
             }
             Some("log") => {
@@ -96,6 +103,7 @@ async fn push_log(
     let pkgname = pkgname.context("Missing package field")?;
     let arch = arch.context("Missing arch field")?;
     let success = success.context("Missing success field")?;
+    let success = if success == "true" { true } else { false };
     let filename = Arc::new(format!("{pkgname}-{arch}.log"));
     let fc = filename.clone();
 
@@ -105,7 +113,17 @@ async fn push_log(
         }
     });
 
-    // TODO: write to database
+    // write to database
+    let mut db = state.db.lock().await;
+    let mut package = db.get(&pkgname).await?;
+
+    package.results.push(db::BuildResult {
+        arch,
+        success,
+        log: filename.to_string(),
+    });
+
+    db.set(&pkgname, &package).await?;
 
     Ok(())
 }

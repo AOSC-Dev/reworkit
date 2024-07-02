@@ -1,7 +1,7 @@
 use anyhow::{ensure, Result};
 use async_compression::tokio::write::GzipEncoder;
 use clap::Parser;
-use reqwest::{multipart::Part, Client};
+use reqwest::{multipart::{self, Part}, Client};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -96,7 +96,7 @@ async fn work(
         let mut encoder = GzipEncoder::new(&mut compress_log);
         encoder.write_all(&log).await?;
 
-        let form = reqwest::multipart::Form::new()
+        let form = multipart::Form::new()
             .text("package", pkg.to_string())
             .text("arch", arch.to_string())
             .text("success", success.to_string())
