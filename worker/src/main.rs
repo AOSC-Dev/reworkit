@@ -74,6 +74,7 @@ async fn work(
     ensure!(ciel_update.status.success(), "Failed to run ciel update-os");
 
     for pkg in pkgs {
+        println!("Building {pkg}");
         let ciel_build = Command::new("ciel")
             .arg("build")
             .arg("-i")

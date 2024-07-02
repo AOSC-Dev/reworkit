@@ -13,7 +13,8 @@ use axum::{
 use db::{Db, Package};
 use serde::Deserialize;
 use tokio::{fs, sync::Mutex};
-use tracing::{error, info};
+use tracing::{error, info, level_filters::LevelFilter};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 // learned from https://github.com/tokio-rs/axum/blob/main/examples/anyhow-error-response/src/main.rs
 pub struct AnyhowError(anyhow::Error);
@@ -47,8 +48,37 @@ struct GetPackageResultQuery {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
+
+    let env_log = EnvFilter::try_from_default_env();
+
+    if let Ok(filter) = env_log {
+        tracing_subscriber::registry()
+            .with(
+                fmt::layer()
+                    .event_format(
+                        tracing_subscriber::fmt::format()
+                            .with_file(true)
+                            .with_line_number(true),
+                    )
+                    .with_filter(filter),
+            )
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(
+                fmt::layer()
+                    .event_format(
+                        tracing_subscriber::fmt::format()
+                            .with_file(true)
+                            .with_line_number(true),
+                    )
+                    .with_filter(LevelFilter::INFO),
+            )
+            .init();
+    }
+
     let url = std::env::var("REWORKIT_URL").context("REWORKIT_URL is not set.")?;
-    let secret = std::env::var("REWORKIT_SECRET").context("REWORKIT_SECTRET is not set.")?;
+    let secret = std::env::var("REWORKIT_SECRET").context("REWORKIT_SECRET is not set.")?;
     let redis = std::env::var("REWORKIT_REDIS_URL").context("REWORKIT_REDIS_URL is not set.")?;
 
     let db = Mutex::new(Db::new(&redis).await?);
@@ -132,15 +162,26 @@ async fn push_log(
 
     // write to database
     let mut db = state.db.lock().await;
-    let mut package = db.get(&pkgname).await?;
+    let package = db.get(&pkgname).await;
 
-    package.results.push(db::BuildResult {
-        arch,
-        success,
-        log: filename.to_string(),
-    });
-
-    db.set(&pkgname, &package).await?;
+    if let Ok(mut package) = package {
+        package.results.push(db::BuildResult {
+            arch,
+            success,
+            log: filename.to_string(),
+        });
+        db.set(&pkgname, &package).await?;
+    } else {
+        let package = Package {
+            name: pkgname.clone(),
+            results: vec![db::BuildResult {
+                arch,
+                success,
+                log: filename.to_string(),
+            }],
+        };
+        db.set(&pkgname, &package).await?;
+    }
 
     Ok(())
 }
