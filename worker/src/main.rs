@@ -134,6 +134,7 @@ async fn work(
         let mut compress_log = vec![];
         let mut encoder = GzipEncoder::new(&mut compress_log);
         encoder.write_all(&log).await?;
+        encoder.flush().await?;
 
         let form = multipart::Form::new()
             .text("package", pkg.to_string())

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use redis::{aio::MultiplexedConnection, AsyncCommands};
 use serde::{Deserialize, Serialize};
@@ -9,12 +11,11 @@ pub struct Db {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Package {
     pub name: String,
-    pub results: Vec<BuildResult>
+    pub results: HashMap<String, BuildResult>
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BuildResult {
-    pub arch: String,
     pub success: bool,
     pub log: String,
 }

@@ -1,6 +1,6 @@
 mod db;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use async_compression::tokio::bufread::GzipDecoder;
@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use db::{Db, Package};
+use db::{BuildResult, Db, Package};
 use serde::Deserialize;
 use tokio::{fs, io, sync::Mutex};
 use tracing::{error, info, level_filters::LevelFilter};
@@ -174,30 +174,20 @@ async fn push_log(
     let mut db = state.db.lock().await;
     let package = db.get(&pkgname).await;
 
+    let result = BuildResult {
+        success,
+        log: filename.to_string(),
+    };
+
     if let Ok(mut package) = package {
-        if let Some(v) = package.results.iter_mut().find(|x| x.arch == arch) {
-            *v = db::BuildResult {
-                arch,
-                success,
-                log: filename.to_string(),
-            }
-        } else {
-            package.results.push(db::BuildResult {
-                arch,
-                success,
-                log: filename.to_string(),
-            });
-        }
+        package.results.insert(arch, result);
         db.set(&pkgname, &package).await?;
     } else {
-        let package = Package {
+        let mut package = Package {
             name: pkgname.clone(),
-            results: vec![db::BuildResult {
-                arch,
-                success,
-                log: filename.to_string(),
-            }],
+            results: HashMap::new(),
         };
+        package.results.insert(arch, result);
         db.set(&pkgname, &package).await?;
     }
 
