@@ -1,0 +1,13 @@
+[package]
+name = "worker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "fs", "macros", "process"] }
+reqwest = { version = "0.12", features = ["multipart"] }
+walkdir = "2.5.0"
+async-compression = { version = "0.4", features = ["gzip", "tokio"] }
+dotenvy = "0.15.7"
