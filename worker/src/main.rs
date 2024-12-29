@@ -7,7 +7,7 @@ use reqwest::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::Arc, time::Duration,
 };
 use tokio::{io::AsyncWriteExt, process::Command, task::spawn_blocking};
 use tracing::{error, info, level_filters::LevelFilter};
@@ -131,8 +131,32 @@ async fn work(
         log.extend("STDERR:\n".as_bytes());
         log.extend(stderr);
 
-        if let Err(e) = push_log(client, token, arch, pkg, success, log, url).await {
-            error!("Push log got error: {}", e);
+        let compress_log = match compression_log(log).await {
+            Ok(log) => log,
+            Err(e) => {
+                error!("Compress LOG got error: {}", e);
+                continue;
+            }
+        };
+
+        'a: for i in 1..=3 {
+            match push_log(
+                client,
+                token,
+                arch,
+                &pkg,
+                success,
+                compress_log.clone(),
+                url,
+            )
+            .await
+            {
+                Ok(_) => break 'a,
+                Err(e) => {
+                    error!("({}/3) Push LOG got error: {}", i, e);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+            }
         }
     }
 
@@ -143,16 +167,11 @@ async fn push_log(
     client: &Client,
     token: &str,
     arch: &str,
-    pkg: String,
+    pkg: &str,
     success: bool,
-    log: Vec<u8>,
+    compress_log: Vec<u8>,
     url: &str,
 ) -> Result<()> {
-    let mut compress_log = vec![];
-    let mut encoder = GzipEncoder::new(&mut compress_log);
-    encoder.write_all(&log).await?;
-    encoder.shutdown().await?;
-
     let form = multipart::Form::new()
         .text("package", pkg.to_string())
         .text("arch", arch.to_string())
@@ -170,6 +189,15 @@ async fn push_log(
         .await?;
 
     Ok(())
+}
+
+async fn compression_log(log: Vec<u8>) -> Result<Vec<u8>> {
+    let mut compress_log = vec![];
+    let mut encoder = GzipEncoder::new(&mut compress_log);
+    encoder.write_all(&log).await?;
+    encoder.shutdown().await?;
+
+    Ok(compress_log)
 }
 
 fn list_packages(tree_dir: &Path) -> Vec<String> {
