@@ -1,7 +1,6 @@
-mod db;
-
 use axum::extract::DefaultBodyLimit;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use sqlx::{PgPool, Pool, Postgres};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
 use async_compression::tokio::bufread::GzipDecoder;
@@ -12,12 +11,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use db::{BuildResult, Db, Package};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
     fs,
     io::{self},
-    sync::Mutex,
 };
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
@@ -43,7 +40,7 @@ where
 
 struct AppState {
     secret: String,
-    db: Mutex<Db>,
+    db: Pool<Postgres>,
     log_dir: PathBuf,
 }
 
@@ -86,11 +83,11 @@ async fn main() -> Result<()> {
 
     let url = std::env::var("REWORKIT_URL").context("REWORKIT_URL is not set.")?;
     let secret = std::env::var("REWORKIT_SECRET").context("REWORKIT_SECRET is not set.")?;
-    let redis = std::env::var("REWORKIT_REDIS_URL").context("REWORKIT_REDIS_URL is not set.")?;
+    let pg = std::env::var("REWORKIT_PGCON").context("REWORKIT_PGCON is not set.")?;
     let log_dir =
         PathBuf::from(std::env::var("REWORKIT_LOG_DIR").context("REWORKIT_LOG_DIR is not set.")?);
 
-    let db = Mutex::new(Db::new(&redis).await?);
+    let db = PgPool::connect(&pg).await?;
 
     let router = Router::new()
         .layer(DefaultBodyLimit::disable())
@@ -107,14 +104,28 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct Package {
+    name: String,
+    arch: String,
+    success: bool,
+    log: String,
+}
+
 async fn get_package_result(
     State(state): State<Arc<AppState>>,
     Query(query): Query<GetPackageResultQuery>,
-) -> Result<Json<Package>, AnyhowError> {
-    let mut db = state.db.lock().await;
-    let package = db.get(&query.name).await?;
+) -> Result<Json<Vec<Package>>, AnyhowError> {
+    let db = state.db.clone();
+    let packages: Vec<Package> = sqlx::query_as!(
+        Package,
+        "SELECT name, arch, success, log FROM build_result WHERE name = $1",
+        query.name
+    )
+    .fetch_all(&db)
+    .await?;
 
-    Ok(Json(package))
+    Ok(Json(packages))
 }
 
 async fn push_log(
@@ -176,26 +187,22 @@ async fn push_log(
         }
     });
 
-    // write to database
-    let mut db = state.db.lock().await;
-    let package = db.get(&pkgname).await;
-
-    let result = BuildResult {
+    let pkg = Package {
+        name: pkgname,
+        arch,
         success,
         log: filename.to_string(),
     };
 
-    if let Ok(mut package) = package {
-        package.results.insert(arch, result);
-        db.set(&pkgname, &package).await?;
-    } else {
-        let mut package = Package {
-            name: pkgname.clone(),
-            results: HashMap::new(),
-        };
-        package.results.insert(arch, result);
-        db.set(&pkgname, &package).await?;
-    }
+    sqlx::query!(
+        "INSERT INTO build_result VALUES ($1, $2, $3, $4)",
+        pkg.name,
+        pkg.arch,
+        pkg.success,
+        pkg.log
+    )
+    .fetch_one(&state.db)
+    .await?;
 
     Ok(())
 }

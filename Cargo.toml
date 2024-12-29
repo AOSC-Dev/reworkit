@@ -12,8 +12,8 @@ serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15.7"
-redis = { version = "0.25.4", features = ["tokio-comp"] }
 async-compression = { version = "0.4", features = ["gzip", "tokio"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "macros", "postgres", "migrate"] }
 
 [workspace]
 members = ["worker"]
