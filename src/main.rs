@@ -116,13 +116,12 @@ async fn get_package_result(
     State(state): State<Arc<AppState>>,
     Query(query): Query<GetPackageResultQuery>,
 ) -> Result<Json<Vec<Package>>, AnyhowError> {
-    let db = state.db.clone();
     let packages: Vec<Package> = sqlx::query_as!(
         Package,
         "SELECT name, arch, success, log FROM build_result WHERE name = $1",
         query.name
     )
-    .fetch_all(&db)
+    .fetch_all(&state.db)
     .await?;
 
     Ok(Json(packages))
