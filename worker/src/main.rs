@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{io::AsyncWriteExt, process::Command, task::spawn_blocking};
-use tracing::{info, level_filters::LevelFilter};
+use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 use walkdir::WalkDir;
 
@@ -131,27 +131,43 @@ async fn work(
         log.extend("STDERR:\n".as_bytes());
         log.extend(stderr);
 
-        let mut compress_log = vec![];
-        let mut encoder = GzipEncoder::new(&mut compress_log);
-        encoder.write_all(&log).await?;
-        encoder.shutdown().await?;
-
-        let form = multipart::Form::new()
-            .text("package", pkg.to_string())
-            .text("arch", arch.to_string())
-            .text("success", success.to_string())
-            .part(
-                "log",
-                Part::bytes(compress_log).file_name(format!("{pkg}.log")),
-            );
-
-        client
-            .post(format!("{url}/push_log"))
-            .header("SECRET", token)
-            .multipart(form)
-            .send()
-            .await?;
+        if let Err(e) = push_log(client, token, arch, pkg, success, log, url).await {
+            error!("Push log got error: {}", e);
+        }
     }
+
+    Ok(())
+}
+
+async fn push_log(
+    client: &Client,
+    token: &str,
+    arch: &str,
+    pkg: String,
+    success: bool,
+    log: Vec<u8>,
+    url: &str,
+) -> Result<()> {
+    let mut compress_log = vec![];
+    let mut encoder = GzipEncoder::new(&mut compress_log);
+    encoder.write_all(&log).await?;
+    encoder.shutdown().await?;
+
+    let form = multipart::Form::new()
+        .text("package", pkg.to_string())
+        .text("arch", arch.to_string())
+        .text("success", success.to_string())
+        .part(
+            "log",
+            Part::bytes(compress_log).file_name(format!("{pkg}.log")),
+        );
+
+    client
+        .post(format!("{url}/push_log"))
+        .header("SECRET", token)
+        .multipart(form)
+        .send()
+        .await?;
 
     Ok(())
 }
