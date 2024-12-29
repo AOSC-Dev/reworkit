@@ -1,5 +1,6 @@
 mod db;
 
+use axum::extract::DefaultBodyLimit;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
@@ -92,6 +93,7 @@ async fn main() -> Result<()> {
     let db = Mutex::new(Db::new(&redis).await?);
 
     let router = Router::new()
+        .layer(DefaultBodyLimit::disable())
         .route("/push_log", post(push_log))
         .route("/get", get(get_package_result))
         .with_state(Arc::new(AppState {
