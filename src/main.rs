@@ -194,7 +194,8 @@ async fn push_log(
     };
 
     sqlx::query!(
-        "INSERT INTO build_result VALUES ($1, $2, $3, $4)",
+        r#"INSERT INTO build_result VALUES ($1, $2, $3, $4)
+ON CONFLICT (name, arch) DO UPDATE SET success=$3, log=$4"#,
         pkg.name,
         pkg.arch,
         pkg.success,

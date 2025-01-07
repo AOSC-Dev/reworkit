@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO build_result VALUES ($1, $2, $3, $4)",
+  "query": "INSERT INTO build_result VALUES ($1, $2, $3, $4)\nON CONFLICT (name, arch) DO UPDATE SET success=$3, log=$4",
   "describe": {
     "columns": [],
     "parameters": {
@@ -13,5 +13,5 @@
     },
     "nullable": []
   },
-  "hash": "7dc6dd10d1f683279caefcd7d81c7a6fc3a85eabcf4a0f0f00b6a547edf4f854"
+  "hash": "3f45478efed531c9a03a41eb03da5f23eaaee1ab418f7c288ce86215a4fd6037"
 }
